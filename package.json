@@ -1,0 +1,12 @@
+{
+  "name": "herokugoodtimes",
+  "version": "1.0.0",
+  "description": "",
+  "main": "herokuGoodTimes.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies":  {"express":  "^4.16.4","save":  "^2.3.2"    },"engines":{"node":"10.x"}
+}
