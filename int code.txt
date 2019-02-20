@@ -1,0 +1,382 @@
+
+
+global class Landhome_UpdateLMLoanProcesses_Scheduled implements Schedulable{ 
+    global void execute(SchedulableContext sc){
+         Landhome_UpdateLMLoanProcesses_Batchable UpdateLMLoanProcesses = new Landhome_UpdateLMLoanProcesses_Batchable();
+         database.executeBatch(UpdateLMLoanProcesses,5);
+    }
+
+}
+
+.........................................
+
+
+
+global class Landhome_UpdateFCLProcesses_Batchable implements Database.Batchable<sObject>,Database.AllowsCallouts{
+    global Database.QueryLocator start(Database.BatchableContext bc){
+       //  Query for Loss Mitigation Record, additonal filters are to only get Loss Mitigation Record that belong to the Mortgage AutomationFinance push to Landhome
+      String query = 'SELECT id,Recordtype.Name,Sale_Scheduled_Date__c,Sale_Held_Date__c,Mediation_Completed_Date__c,Servicer_Loan_Number__c,Entity__c,Demand_Letter_Mailed_Date__c,Referral_Date__c,Loan_Master__r.Borrower_First_Name__c,Active_FCL_Generic_Milestone__c,Prior_FCL_Generic_Milestone__c,'+
+                        'Loan_Master__r.Borrower_Last_Name__c,Loan_Master__r.Servicer_Loan_Number__c,Loan_Master__r.Land_Home_Loan_Status__c,Loan_Master__r.Boarding_Status__c'+
+                        ' FROM Foreclosure__c where Loan_Master__r.Boarding_Status__c=\'Boarded\' AND Loan_Master__r.Servicer_Loan_Number__c!=NULL '+
+                        'AND Loan_Master__r.Borrower_First_Name__c!=NULL AND Loan_Master__r.Borrower_Last_Name__c!=NULL AND Loan_Master__r.Land_Home_Loan_Status__c=\'FCL\' AND Prior_FCL_Generic_Milestone__c != NULL';
+					 
+      
+      return database.getQueryLocator(query);
+    }
+
+
+         
+     global void execute(Database.BatchableContext bc, List<Foreclosure__c> FclList){
+         
+		Map<String,Integer> GetRecourseTypes = new Map<String,Integer>{'Unknown'=>0,'Recourse'=>1,'Non-Recourse'=>2,'Shared'=>3};
+		
+		
+		
+		Map<String,Integer> GetForeclosureStatuses = new Map<String,Integer>{'None'=>0,'Active'=>1,'Complete'=>2,'Delete'=>3,'Marked for Deletion'=>4,'Suspend'=>5,'Remove'=>6};
+		
+		
+		
+		//Map<String,String> GetDefaultEvents  = new Map<String,String>{'Deed Received'=>'100','Demand Mailed'=>'102','Judgment Entered'=>'106','Redemption Expires'=>'113','Sale Completed'=>'115'};
+		
+		
+		
+		Map<String,String> GetForeclosureEvents  = new Map<String,String>{'Sale Scheduled'=>'01','Sale Completed/Confirmed'=>'115','Mediation Completed'=>'019','Sale Held'=>'02','Judgment Submitted'=>'023','Judgement Submitted'=>'023','Pre-Sale Requirements Satisfied'=>'024',
+		                                                                    'Default Entered'=>'04','Default Submitted'=>'05','First Legal'=>'103','Publication/Posting Completed'=>'104','Notice of Sale Submitted'=>'111',
+		                                                                    'Referral'=>'114','Service Completed'=>'117','File Verified'=>'121','Judgment Entered'=>'16','Motion to Appoint Referee Entered'=>'019',
+		                                                                    'Motion to Appoint Referee Submitted'=>'019','Deed Received'=>'02'};
+		                                                                    
+		                                                                    
+		                                                                    
+        Map<String,String> Milestone_to_Date  = new Map<String,String>{'Sale Scheduled'=>'Sale_Scheduled_Date__c','Mediation Completed'=>'Mediation_Completed_Date__c','Sale Held'=>'Sale_Held_Date__c',
+                                                                        'Judgement Submitted'=>'Judgement_Submitted_Date__c','Pre-Sale Requirements Satisfied'=>'Pre_Sale_Requirements_Satisfied_Date__c','Default Entered'=>'Default_Entered_Date__c',
+                                                                        'Default Submitted'=>'Default_Submitted_Date__c','First Legal'=>'First_Legal_Date__c','Publication/Posting Completed'=>'Publication_Posting_Completed_Date__c',
+                                                                        'Notice of Sale Submitted'=>'Notice_of_Sale_Submitted_Date__c','Referral'=>'Referral_Date__c','Service Completed'=>'Service_Completed_Date__c',
+                                                                        'File Verified'=>'File_Verified_Date__c','Judgment Submitted'=>'Judgement_Submitted_Date__c','Demand Mailed'=>'Demand_Letter_Mailed_Date__c',
+                                                                        'Judgment Entered'=>'Judgment_Entered_Date__c','Sale Completed'=>'Sale_Completed_Date__c','Deed Received'=>'Deed_Received_Date__c',
+                                                                        'Motion to Appoint Referee Submitted'=>'Motion_to_Appoint_Referee_Entered_Date__c','Motion to Appoint Referee Entered'=>'Motion_to_Appoint_Referee_Entered_Date__c',
+                                                                        'Sale Completed/Confirmed'=>'Sale_Completed_Date__c'}; 
+         //--------------------- Call out body for UpdateLMLoanProcesses
+        String UpdateFCLProcesses_Batchable;
+        //--------------------- log in body for UpdateLMLoanProcesses
+        String Body_Log_in = 'grant_type=password&username=automationFinance&password=af05162018';
+        //--------------------- log in URL for UpdateLMLoanProcesses
+        String URL_Log_in='https://sdapi-qa.lhfs.com/api/user/login/';
+        //--------------------- log in URL for UpdateLMLoanProcesses
+        String URL_UpdateFCLProcesses = 'https://sdapi-qa.lhfs.com/api/foreclosure/updateForeclosures';
+        //--------------------- LH Security token
+        String token;
+        String result_code;
+        String lmBorrowerIntentionCode;
+        List<String> result_codes = new List<String>();
+        system.debug(FclList);
+
+        JSONGenerator gen = JSON.createGenerator(true);
+        gen.writeStartArray();
+        for(Foreclosure__c fcl : FclList){
+            if(fcl.Prior_FCL_Generic_Milestone__c!=fcl.Active_FCL_Generic_Milestone__c){
+            gen.writeStartObject();
+                gen.writeFieldName('foreclosureInfo');
+                gen.writeStartObject();
+                gen.writeStringField('loanId', fcl.Servicer_Loan_Number__c);
+				gen.writeStringField('foreclosureStatus', '1');
+                gen.writeFieldName('loanEventInfo');
+                	gen.writeStartArray();
+                		gen.writeStartObject();
+                          /*  if(GetForeclosureEvents.containsKey(fcl.Active_FCL_Generic_Milestone__c)){
+                                String query = 'select id,'+Milestone_to_Date.get(fcl.Active_FCL_Generic_Milestone__c)+' from Foreclosure__c where id=\''+fcl.id+'\'';
+                                Foreclosure__c fcl_temp = Database.query(query);
+                                System.debug(query);
+                                
+                                gen.writeStringField('loanEventId', GetForeclosureEvents.get(fcl.Active_FCL_Generic_Milestone__c));//-------------------------------------------------------------------------- TO BE UPDATED
+                                gen.writeDateTimeField('dEventDate', datetime.valueOf(fcl_temp.get(Milestone_to_Date.get(fcl.Active_FCL_Generic_Milestone__c))));//-------------------------------------------------------------------------- TO BE UPDATED
+                                //gen.writeDateTimeField('dueDate', datetime.valueOf(fcl_temp.get(Milestone_to_Date.get(fcl.Active_FCL_Generic_Milestone__c))));//-------------------------------------------------------------------------- TO BE UPDATED
+                                //gen.writeNumberField('initialNumberOfDaysScheduled', 0);
+                                //gen.writeStringField('dEvent', 'F');
+                            }*/
+                		
+                    	gen.writeEndObject();
+                	gen.writeEndArray();
+                gen.writeEndObject();
+            gen.writeEndObject();    
+        		}
+        	}
+        	gen.writeEndArray();
+        UpdateFCLProcesses_Batchable = gen.getAsString();
+        if(!String.isEmpty(UpdateFCLProcesses_Batchable)){
+            Httprequest log_in = new HttpRequest();  
+        	log_in.setMethod('POST');
+        	log_in.setHeader('Content-Type','application/x-www-form-urlencoded');
+        	log_in.setEndpoint(URL_Log_in);
+        	log_in.setBody(Body_Log_in);       
+        	HttpResponse Log_in_response = new Http().send(log_in);                 
+        	JSONParser parser = JSON.createParser(Log_in_response.getBody());        
+                while(parser.nextToken()!= null) {
+                if(String.valueof(parser.getCurrentToken())=='VALUE_STRING'&&String.valueof(parser.getCurrentName())=='access_token'){
+                    token=parser.getText();
+                	}                   
+                }
+            Httprequest UpdateLMLoanProcesses  = new HttpRequest();
+        	UpdateLMLoanProcesses .setMethod('PUT');
+            UpdateLMLoanProcesses .setEndpoint(URL_UpdateFCLProcesses);  
+        	UpdateLMLoanProcesses .setHeader('Content-Type','application/json');
+        	UpdateLMLoanProcesses .setHeader('Authorization','bearer '+token);
+            UpdateLMLoanProcesses.setBody(UpdateFCLProcesses_Batchable);
+        	HttpResponse UpdateLMLoanProcesses_response = new Http().send(UpdateLMLoanProcesses);
+            system.debug(UpdateLMLoanProcesses_response.getStatusCode());
+            system.debug(UpdateLMLoanProcesses_response.getBody());
+            if(UpdateLMLoanProcesses_response.getStatusCode()==200){
+                JSONParser parser2 = JSON.createParser(UpdateLMLoanProcesses_response.getBody());
+                while(parser2.nextToken()!= null) {
+                if(String.valueof(parser2.getCurrentToken())=='VALUE_NUMBER_INT'&&String.valueof(parser2.getCurrentName())=='responseCode'){
+                    result_code=parser2.getText();
+                    result_codes.add(result_code);
+                	}                   
+                }
+            }
+       	//	update lm_list;
+        }
+        if(FclList.size()==result_codes.size()){
+            for(Integer i =0;i<result_codes.size();i++){
+                if(result_codes[i]=='200'){
+                FclList[i].Prior_FCL_Generic_Milestone__c = FclList[i].Active_FCL_Generic_Milestone__c;
+                }
+            }
+        }
+        update FclList;
+    }
+    global void finish(Database.BatchableContext bc){
+    }
+}
+
+..............................................................................
+
+
+global class Landhome_UpdateFCLProcesses_Scheduleable implements Schedulable{ 
+    global void execute(SchedulableContext sc){
+         Landhome_UpdateFCLProcesses_Batchable UpdateFCLProcesses = new Landhome_UpdateFCLProcesses_Batchable();
+         database.executeBatch(UpdateFCLProcesses,10);
+    }
+
+}
+
+....................................................................................
+
+public class Landhome_AddLMLoanProcess {
+	public String Body_Log_in = 'grant_type=password&username=automationFinance&password=af05162018';    
+	public String Body_AddLMLoanProcess;    
+	public String URL_Log_in='https://sdapi-qa.lhfs.com/api/user/login/';
+	public String URL_Log_out='https://sdapi-qa.lhfs.com/api/user/logout/';
+	public String URL_AddLMLoanProcess ='https://sdapi-qa.lhfs.com/api/lossmit/addloan';
+	Public String Header_Log_out;
+ 	Public String token;
+	public void PostLoanStatus(){
+    Httprequest log_in = new HttpRequest();  
+	log_in.setMethod('POST');
+	log_in.setHeader('Content-Type','application/x-www-form-urlencoded');
+	log_in.setEndpoint(URL_Log_in);
+	log_in.setBody(Body_Log_in);       
+	HttpResponse Log_in_response = new Http().send(log_in);                 
+	JSONParser parser = JSON.createParser(Log_in_response.getBody());        
+                while(parser.nextToken()!= null) {
+                if(String.valueof(parser.getCurrentToken())=='VALUE_STRING'&&String.valueof(parser.getCurrentName())=='access_token'){
+                    token=parser.getText();
+                }                   
+                }
+	system.debug(token);
+	Httprequest AddLMLoanProcess  = new HttpRequest();
+	AddLMLoanProcess .setMethod('POST');
+    AddLMLoanProcess .setEndpoint(URL_AddLMLoanProcess);  
+	AddLMLoanProcess .setHeader('Content-Type','application/json');
+	AddLMLoanProcess .setHeader('Authorization','bearer '+token);
+	JSONGenerator gen = JSON.createGenerator(true);
+	gen.writeStartObject();
+	gen.writeStringField('loanId', '9999999999');
+	gen.writeStringField('defaultReason', '009');
+    gen.writeStringField('contactOutcome', '');
+    gen.writeStringField('lmPlanTemplCode', '006');
+	gen.writeStringField('lmDate', '11/2/2018');
+    gen.writeStringField('collectorID', '041');
+    gen.writeStringField('lmApplicationSent', '');
+    gen.writeStringField('lmBorrowerIntentionCode', '001');
+    gen.writeStringField('completeApplicationReceived', '');
+    gen.writeFieldName('checkListItems');
+    gen.writeStartArray();   
+    	gen.writeStartObject();
+            gen.writeStringField('code', '007');
+            gen.writeStringField('dueDate', '11/7/2018');
+            gen.writeStringField('completionDate', '11/1/2018');
+        gen.writeEndObject();
+        gen.writeStartObject();
+            gen.writeStringField('code', '100');
+            gen.writeStringField('dueDate', '11/7/2018');
+            gen.writeStringField('completionDate', '11/3/2018');
+        gen.writeEndObject();
+        gen.writeStartObject();
+            gen.writeStringField('code', '009');
+            gen.writeStringField('dueDate', '11/7/2018');
+            gen.writeStringField('completionDate', '11/2/2018');
+        gen.writeEndObject();
+    gen.writeEndArray();             
+	gen.writeEndObject();
+	Body_AddLMLoanProcess = gen.getAsString();
+	AddLMLoanProcess.setBody(Body_AddLMLoanProcess);
+	HttpResponse AddLMLoanProcess_response = new Http().send(AddLMLoanProcess);
+    system.debug(AddLMLoanProcess_response.getStatusCode());    
+	system.debug(AddLMLoanProcess_response.getBody());
+
+
+	Header_Log_out = token;
+	Httprequest log_out = new HttpRequest();  
+	log_out.setEndpoint(URL_Log_out);
+	log_out.setMethod('POST');
+	log_out.setHeader('Authorization','bearer '+token);
+	HttpResponse Log_out_response = new Http().send(log_out);
+	system.debug(Log_out_response.getBody());
+    }
+}
+.........................................................
+
+
+global class Landhome_PostLoanStatus_Batchable implements Database.Batchable<sObject>,Database.AllowsCallouts{
+
+    global Database.QueryLocator start(Database.BatchableContext bc){
+       //  List<Landhome> Landhome1 = new List<Landhome>();  
+      string query= 'SELECT id,Borrower_First_Name__c,Borrower_Last_Name__c,Servicer_Loan_Number__c,Land_Home_Loan_Status__c,Boarding_Status__c,Prior_Land_Home_Loan_Status__c FROM Loan_Master__c where Boarding_Status__c=\'Boarded\' AND Land_Home_Loan_Status__c!=NULL AND Servicer_Loan_Number__c!=NULL AND Borrower_First_Name__c!=NULL AND Borrower_Last_Name__c!=NULL';
+      
+      return database.getQueryLocator(query);
+    }
+
+
+         
+     global void execute(Database.BatchableContext bc, List<Loan_Master__c> mortgageList){
+        String result_code;
+        List<String> result_codes = new List<String>();     	
+        String PostLoanStatus_Batchable;
+        String Body_Log_in = 'grant_type=password&username=automationFinance&password=af05162018';
+        String URL_Log_in='https://sdapi-qa.lhfs.com/api/user/login/';
+        String URL_PostLoanStatus = 'https://sdapi-qa.lhfs.com/api/loanstatus/StatusList';
+        String token;
+        system.debug(mortgageList.size());
+        JSONGenerator gen = JSON.createGenerator(true);
+        gen.writeStartArray();
+        for(Loan_Master__c lm : mortgageList){
+			if(lm.Prior_Land_Home_Loan_Status__c != lm.Land_Home_Loan_Status__c){
+                gen.writeStartObject();
+                gen.writeStringField('loanId', lm.Servicer_Loan_Number__c);
+                gen.writeStringField('borrowerLastName', lm.Borrower_Last_Name__c);
+                gen.writeStringField('borrowerFirstName', lm.Borrower_First_Name__c);
+                gen.writeStringField('loanStatus', lm.Land_Home_Loan_Status__c);
+                gen.writeDateTimeField('dateOfLoanStatus', datetime.now());
+        		gen.writeEndObject();
+                }           
+        	}
+        	gen.writeEndArray();
+        PostLoanStatus_Batchable = gen.getAsString();
+        /*
+         * 
+* if(acc.name=='jiabin'){
+string code = 003;
+}
+code
+         */
+        if(!String.isEmpty(PostLoanStatus_Batchable)){
+            Httprequest log_in = new HttpRequest();  
+        	log_in.setMethod('POST');
+        	log_in.setHeader('Content-Type','application/x-www-form-urlencoded');
+        	log_in.setEndpoint(URL_Log_in);
+        	log_in.setBody(Body_Log_in);       
+        	HttpResponse Log_in_response = new Http().send(log_in);                 
+        	JSONParser parser = JSON.createParser(Log_in_response.getBody());        
+                while(parser.nextToken()!= null) {
+                if(String.valueof(parser.getCurrentToken())=='VALUE_STRING'&&String.valueof(parser.getCurrentName())=='access_token'){
+                    token=parser.getText();
+                }                   
+                }
+            Httprequest PostLoanStatus  = new HttpRequest();
+        	PostLoanStatus .setMethod('POST');
+            PostLoanStatus .setEndpoint(URL_PostLoanStatus);  
+        	PostLoanStatus .setHeader('Content-Type','application/json');
+        	PostLoanStatus .setHeader('Authorization','bearer '+token);
+            PostLoanStatus.setBody(PostLoanStatus_Batchable);
+        	HttpResponse PostLoanStatus_response = new Http().send(PostLoanStatus);
+            system.debug(PostLoanStatus_response.getStatusCode());    
+        	system.debug(PostLoanStatus_response.getBody());
+            if(PostLoanStatus_response.getStatusCode()==200){
+                for(Loan_master__c lm:mortgageList){
+                  lm.Prior_Land_Home_Loan_Status__c=lm.Land_Home_Loan_Status__c;
+                }      		
+            }
+        }
+
+        update mortgageList;
+        
+    }
+    global void finish(Database.BatchableContext bc){
+        
+    }
+    
+}
+.................................................................
+
+global class Landhome_PostLoanStatus_Scheduled implements Schedulable{
+  
+    global void execute(SchedulableContext sc){
+         Landhome_PostLoanStatus_Batchable PostLoanStatusBatch = new Landhome_PostLoanStatus_Batchable();
+         database.executeBatch(PostLoanStatusBatch,100);
+    }
+
+}
+
+.....................................................................
+
+
+public class Landhome_PostLoanStatus {
+	public String Body_Log_in = 'grant_type=password&username=automationFinance&password=af05162018';    
+	public String Body_Post_Loan_Status;    
+	public String URL_Log_in='https://sdapi-qa.lhfs.com/api/user/login/';
+	public String URL_Log_out='https://sdapi-qa.lhfs.com/api/user/logout/';
+	public String URL_Post_Loan_Status='https://sdapi-qa.lhfs.com/api/loanstatus/Status';
+	Public String Header_Log_out;
+ 	Public String token;
+	public void PostLoanStatus(){
+    Httprequest log_in = new HttpRequest();  
+	log_in.setMethod('POST');
+	log_in.setHeader('Content-Type','application/x-www-form-urlencoded');
+	log_in.setEndpoint(URL_Log_in);
+	log_in.setBody(Body_Log_in);       
+	HttpResponse Log_in_response = new Http().send(log_in);                 
+	JSONParser parser = JSON.createParser(Log_in_response.getBody());        
+                while(parser.nextToken()!= null) {
+                if(String.valueof(parser.getCurrentToken())=='VALUE_STRING'&&String.valueof(parser.getCurrentName())=='access_token'){
+                    token=parser.getText();
+                }                   
+                }
+	system.debug(token);
+	Httprequest Post_Loan_Status = new HttpRequest();
+	Post_Loan_Status.setMethod('POST');
+    Post_Loan_Status.setEndpoint(URL_Post_Loan_Status);  
+	Post_Loan_Status.setHeader('Content-Type','application/json');
+	Post_Loan_Status.setHeader('Authorization','bearer '+token);
+	JSONGenerator gen = JSON.createGenerator(true);
+	gen.writeStartObject();
+	gen.writeStringField('loanId', '9999999999');
+	gen.writeStringField('borrowerLastName', 'Account');
+    gen.writeStringField('borrowerFirstName', 'Test');
+    gen.writeStringField('loanStatus', '90 DPD+');
+	gen.writeStringField('dateOfLoanStatus', '2018-11-10T01:30:40.4569894-05:00');
+	gen.writeEndObject();
+	Body_Post_Loan_Status = gen.getAsString();
+	Post_Loan_Status.setBody(Body_Post_Loan_Status);
+	HttpResponse Post_Loan_Status_response = new Http().send(Post_Loan_Status);
+	system.debug(Post_Loan_Status_response.getBody());
+
+
+	Header_Log_out = token;
+	Httprequest log_out = new HttpRequest();  
+	log_out.setEndpoint(URL_Log_out);
+	log_out.setMethod('POST');
+	log_out.setHeader('Authorization','bearer '+token);
+	HttpResponse Log_out_response = new Http().send(log_out);
+	system.debug(Log_out_response.getBody());
+    }
+}
