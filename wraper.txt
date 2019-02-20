@@ -1,0 +1,16 @@
+public class LMLoanProcessWrapper {
+    public string loanId{get;set;}
+    public String defaultReason{get;set;}
+    Public String lmPlanTemplCode{get;set;}
+    public String lmDate{get;set;}
+    public string lmApplicationSent{get;set;}
+    public string lmBorrowerIntentionCode{get;set;}
+    public string  completeApplicationReceived{get;set;}
+    
+    public class checkListItems{
+        public String code{get;set;}
+        public String dueDate{get;set;}
+        public String completionDate{get;set;}
+    }
+
+}
